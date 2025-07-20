@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumbar Fusion ASD Risk Calculator</title>
+    <!-- Load Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load React and ReactDOM from CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Load Babel Standalone to transpile JSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Custom Styles -->
+    <style>
+        /* Define Inter font for the entire application */
+        body {
+            font-family: 'Inter', sans-serif;
+            box-sizing: border-box; /* Ensure padding and border are included in total size */
+        }
+        /* Styles for custom error message box */
+        .message-box-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .message-box-content {
+            background-color: white;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            text-align: center;
+            max-width: 90%; /* Responsive max width */
+            width: fit-content; /* Adjust width to content if smaller */
+            margin: 0 16px; /* Horizontal margin on mobile */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Main App component
+        const App = () => {
+            // State to manage the current view: 'intro', 'form', 'results'
+            const [currentView, setCurrentView] = React.useState('intro');
+            // State to store the selected values for each variable
+            const [variables, setVariables] = React.useState({
+                age: '0',
+                genderMenopause: '0',
+                preexistingDiscDegeneration: '0',
+                unfavorableAnatomy: '0',
+                geneticPredisposition: '0',
+                elevatedBMI: '0',
+                activeSmoking: '0',
+                osteoporosis: '0',
+                uncontrolledDiabetes: '0',
+                fusedLevels: '0',
+                distalFusionLevel: '0',
+                adjacentLaminectomy: '0',
+                suboptimalSagittalAlignment: '0',
+                adjacentFacetViolation: '0',
+                muscleLigamentDamage: '0',
+            });
+            // State to store the calculated risk score
+            const [riskScore, setRiskScore] = React.useState(0);
+            // State to store the risk category and percentage
+            const [riskCategory, setRiskCategory] = React.useState('');
+            const [estimatedPercentage, setEstimatedPercentage] = React.useState('');
+            // State to store personalized recommendations
+            const [recommendations, setRecommendations] = React.useState([]);
+
+            // State to store LLM-generated detailed recommendations
+            const [detailedRecommendations, setDetailedRecommendations] = React.useState('');
+            // State to manage loading status for LLM generation
+            const [isGeneratingDetailedRecommendations, setIsGeneratingDetailedRecommendations] = React.useState(false);
+
+            // Function to navigate between views
+            const navigateTo = (view) => {
+                setCurrentView(view);
+            };
+
+            // Function to handle changes in form inputs
+            const handleVariableChange = (name, value) => {
+                setVariables(prev => ({ ...prev, [name]: value }));
+            };
+
+            // Data structure for variables and their points
+            const variableDefinitions = [
+                {
+                    id: 'age',
+                    name: 'Age',
+                    type: 'non-modifiable',
+                    options: [
+                        { label: '<45 years', value: '0', points: 0 },
+                        { label: '45–60 years', value: '1', points: 1 },
+                        { label: '>60 years', value: '2', points: 2 },
+                    ],
+                    evidence: 'Sears et al., 2011; Hashimoto et al., 2019',
+                    description: "Age is a significant non-modifiable risk factor for ASD. Older patients generally have more pre-existing degenerative changes and reduced tissue healing capacity, increasing their susceptibility to ASD."
+                },
+                {
+                    id: 'genderMenopause',
+                    name: 'Gender and Menopause',
+                    type: 'non-modifiable',
+                    options: [
+                        { label: 'Male', value: '0', points: 0 },
+                        { label: 'Premenopausal Woman', value: '1', points: 1 },
+                        { label: 'Postmenopausal Woman', value: '2', points: 2 },
+                    ],
+                    evidence: 'Huang et al., 2025',
+                    description: "Hormonal changes, particularly the decline in estrogen after menopause, can affect bone density and disc health, potentially increasing the risk of ASD in women."
+                },
+                {
+                    id: 'preexistingDiscDegeneration',
+                    name: 'Pre-existing Adjacent Disc Degeneration',
+                    type: 'non-modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes (documented on imaging)', value: '1', points: 3 },
+                    ],
+                    evidence: 'Masevnin et al., 2015',
+                    description: "Pre-existing degeneration in the adjacent disc, as documented on imaging (e.g., MRI), indicates a compromised disc that is more prone to accelerated degeneration and symptomatic ASD after spinal fusion."
+                },
+                {
+                    id: 'unfavorableAnatomy',
+                    name: 'Unfavorable Anatomical Characteristics (High PI, Mismatch)',
+                    type: 'non-modifiable',
+                    options: [
+                        { label: 'PI ≤55° and PI-LL mismatch ≤10°', value: '0', points: 0 },
+                        { label: 'PI >55° or mismatch >10°', value: '1', points: 2 },
+                    ],
+                    evidence: 'Wang et al., 2024',
+                    description: "Pelvic incidence (PI) and PI-lumbar lordosis (PI-LL) mismatch are indicators of spinal alignment. Unfavorable values suggest biomechanical stress on adjacent segments, increasing ASD risk."
+                },
+                {
+                    id: 'geneticPredisposition',
+                    name: 'Known Genetic Predisposition (e.g., pro-inflammatory polymorphisms)',
+                    type: 'non-modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 2 },
+                    ],
+                    evidence: 'Omair et al., 2016',
+                    description: "Certain genetic factors, such as polymorphisms related to inflammatory responses, may predispose individuals to accelerated disc degeneration and ASD."
+                },
+                {
+                    id: 'elevatedBMI',
+                    name: 'Elevated BMI (>30)',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 2 },
+                    ],
+                    evidence: 'Ou et al., 2015; Lau et al., 2021',
+                    description: "High Body Mass Index (BMI) increases mechanical load on the spine, particularly at adjacent segments, contributing to accelerated degeneration and higher ASD risk."
+                },
+                {
+                    id: 'activeSmoking',
+                    name: 'Active Smoking',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 1 },
+                    ],
+                    evidence: 'Huang et al., 2025',
+                    description: "Smoking impairs disc nutrition, reduces blood flow, and promotes inflammatory processes, all of which contribute to disc degeneration and increase the risk of ASD."
+                },
+                {
+                    id: 'osteoporosis',
+                    name: 'Osteoporosis (T-score < –2.5)',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 2 },
+                    ],
+                    evidence: 'Hashimoto et al., 2019',
+                    description: "Osteoporosis weakens bone quality, which can affect the stability of the fusion construct and increase stress on adjacent segments, leading to a higher risk of ASD."
+                },
+                {
+                    id: 'uncontrolledDiabetes',
+                    name: 'Poorly Controlled Diabetes (HbA1c >7%)',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 1 },
+                    ],
+                    evidence: 'Huang et al., 2025',
+                    description: "Poorly controlled diabetes can negatively impact tissue healing, microvascular supply to discs, and overall metabolic health, contributing to degenerative processes and ASD."
+                },
+                {
+                    id: 'fusedLevels',
+                    name: 'Number of Fused Levels',
+                    type: 'modifiable',
+                    options: [
+                        { label: '1 level', value: '0', points: 0 },
+                        { label: '2 levels', value: '1', points: 1 },
+                        { label: '≥3 levels', value: '2', points: 2 },
+                    ],
+                    evidence: 'Sears et al., 2011',
+                    description: "Fusing more spinal levels increases the compensatory motion and stress transferred to the adjacent segments, thereby escalating the risk of ASD."
+                },
+                {
+                    id: 'distalFusionLevel',
+                    name: 'Distal Fusion Level',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'Fusion to sacrum', value: '0', points: 0 },
+                        { label: 'Floating (ends at L5)', value: '1', points: 2 },
+                    ],
+                    evidence: 'Sears et al., 2011',
+                    description: "Fusion ending at L5 (floating fusion) can place significant stress on the L5-S1 segment, which is naturally highly mobile and prone to degeneration, increasing ASD risk."
+                },
+                {
+                    id: 'adjacentLaminectomy',
+                    name: 'Unfused Adjacent Laminectomy',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 2 },
+                    ],
+                    evidence: 'Sears et al., 2011; Pinto et al., 2021',
+                    description: "Performing a laminectomy at an adjacent level without fusion can destabilize that segment, leading to increased motion and accelerated degeneration, thus raising ASD risk."
+                },
+                {
+                    id: 'suboptimalSagittalAlignment',
+                    name: 'Suboptimal Sagittal Alignment (PI-LL mismatch >10°, high pelvic tilt)',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 2 },
+                    ],
+                    evidence: 'Rothenfluh et al., 2015; Wang et al., 2024',
+                    description: "Poor sagittal alignment after fusion, indicated by a significant PI-LL mismatch or high pelvic tilt, creates abnormal biomechanical forces on adjacent segments, promoting ASD."
+                },
+                {
+                    id: 'adjacentFacetViolation',
+                    name: 'Adjacent Facet Violation',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 1 },
+                    ],
+                    evidence: 'Lau et al., 2021',
+                    description: "Intraoperative violation or damage to the facet joints at the adjacent level can compromise their stability and integrity, predisposing the segment to accelerated degeneration and ASD."
+                },
+                {
+                    id: 'muscleLigamentDamage',
+                    name: 'Significant Muscle or Ligament Damage (extensive open surgery without MIS preservation)',
+                    type: 'modifiable',
+                    options: [
+                        { label: 'No', value: '0', points: 0 },
+                        { label: 'Yes', value: '1', points: 1 },
+                    ],
+                    evidence: 'Jokeit et al., 2025',
+                    description: "Extensive muscle and ligament dissection during open surgery can lead to instability and altered biomechanics at adjacent levels, increasing the risk of ASD compared to minimally invasive surgery (MIS) techniques."
+                },
+            ];
+
+            // Function to calculate the risk score and determine category/percentage
+            const calculateRisk = () => {
+                let totalScore = 0;
+                const activeRecommendations = [];
+
+                variableDefinitions.forEach(variableDef => {
+                    const selectedValue = variables[variableDef.id];
+                    const selectedOption = variableDef.options.find(opt => opt.value === selectedValue);
+                    if (selectedOption) {
+                        totalScore += selectedOption.points;
+
+                        // Add recommendations for modifiable factors if they contributed points
+                        if (variableDef.type === 'modifiable' && selectedOption.points > 0) {
+                            switch (variableDef.id) {
+                                case 'elevatedBMI':
+                                    activeRecommendations.push("Optimize weight before surgery (BMI reduction >5%).");
+                                    break;
+                                case 'activeSmoking':
+                                    activeRecommendations.push("Reinforce smoking cessation.");
+                                    break;
+                                case 'osteoporosis':
+                                    activeRecommendations.push("Initiate preoperative anti-resorptive treatment for osteoporosis.");
+                                    break;
+                                case 'uncontrolledDiabetes':
+                                    activeRecommendations.push("Intensive glycemic control pre- and post-operatively.");
+                                    break;
+                                case 'distalFusionLevel':
+                                    activeRecommendations.push("Consider extending fusion to the sacrum if L5–S1 already has degeneration.");
+                                    break;
+                                case 'adjacentLaminectomy':
+                                    activeRecommendations.push("Avoid adjacent laminectomy without stabilizing fixation.");
+                                    break;
+                                case 'suboptimalSagittalAlignment':
+                                    activeRecommendations.push("Plan strict sagittal correction, PI-LL mismatch <10°.");
+                                    break;
+                                case 'muscleLigamentDamage':
+                                    activeRecommendations.push("Use MIS technique to preserve musculature and ligaments.");
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
+                    }
+                });
+
+                setRiskScore(totalScore);
+                setRecommendations(activeRecommendations);
+                setDetailedRecommendations('');
+
+                // Determine category and percentage
+                if (totalScore >= 0 && totalScore <= 6) {
+                    setRiskCategory('Low');
+                    setEstimatedPercentage('~5–10%');
+                } else if (totalScore >= 7 && totalScore <= 12) {
+                    setRiskCategory('Moderate');
+                    setEstimatedPercentage('~10–25%');
+                } else if (totalScore > 12) {
+                    setRiskCategory('High');
+                    setEstimatedPercentage('>25%');
+                }
+
+                navigateTo('results');
+            };
+
+            // Function to generate detailed recommendations using Gemini API
+            const generateDetailedRecommendations = async () => {
+                setIsGeneratingDetailedRecommendations(true);
+                setDetailedRecommendations('Generating detailed recommendations...');
+
+                const prompt = `As an expert assistant for spine surgeons, based on the following Adjacent Segment Disease (ASD) risk profile after lumbar fusion, please elaborate and expand on the given recommendations. Provide a more detailed explanation and the reasoning behind each, focusing on clinical importance and practical steps.
+
+                Risk Score: ${riskScore}
+                Risk Category: ${riskCategory}
+                Estimated 5-year Risk Percentage: ${estimatedPercentage}
+
+                Current Recommendations:
+                ${recommendations.length > 0 ? recommendations.map(rec => `- ${rec}`).join('\n') : 'No specific recommendations identified based on modifiable factors.'}
+
+                Selected Variable Details:
+                ${Object.keys(variables).map(key => {
+                    const varDef = variableDefinitions.find(def => def.id === key);
+                    const selectedOption = varDef.options.find(opt => opt.value === variables[key]);
+                    return `${varDef.name}: ${selectedOption ? selectedOption.label : 'N/A'} (Points: ${selectedOption ? selectedOption.points : 0})`;
+                }).join('\n')}
+
+                Please organize the detailed recommendations clearly and concisely for a clinical audience.`;
+
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+
+                const payload = { contents: chatHistory };
+                const apiKey = ""; // Leave as empty string, Canvas will provide it
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+
+                    if (result.error) {
+                        console.error("API Error:", result.error);
+                        setDetailedRecommendations(`API Error: ${result.error.message}\nPlease try again.`);
+                    } else if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const text = result.candidates[0].content.parts[0].text;
+                        setDetailedRecommendations(text);
+                    } else {
+                        setDetailedRecommendations('Could not generate detailed recommendations. The service returned an unexpected response. Please try again.');
+                        console.error("Unexpected API response structure:", result);
+                    }
+                } catch (error) {
+                    setDetailedRecommendations('Error connecting to the AI service. Please check your internet connection and try again.');
+                    console.error("Error calling Gemini API:", error);
+                } finally {
+                    setIsGeneratingDetailedRecommendations(false);
+                }
+            };
+
+            // Dynamic loading of html2canvas and jspdf for PDF export
+            React.useEffect(() => {
+                const loadScript = (src) => {
+                    return new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = src;
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                };
+
+                const loadScripts = async () => {
+                    if (currentView === 'results' && typeof window.html2canvas === 'undefined') {
+                        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+                        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+                    }
+                };
+                loadScripts();
+            }, [currentView]);
+
+            const exportPdf = async () => {
+                const input = document.getElementById('result-content');
+                if (!input) {
+                    console.error("Element with ID 'result-content' not found.");
+                    return;
+                }
+                try {
+                    const canvas = await window.html2canvas(input, { scale: 2 });
+                    const imgData = canvas.toDataURL('image/png');
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({
+                        orientation: 'portrait',
+                        unit: 'px',
+                        format: [canvas.width, canvas.height]
+                    });
+                    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+                    pdf.save('asd_risk_report.pdf');
+                } catch (error) {
+                    console.error("Error generating PDF:", error);
+                    const messageBox = document.createElement('div');
+                    messageBox.className = 'message-box-overlay';
+                    messageBox.innerHTML = `
+                        <div class="message-box-content">
+                            <p class="text-lg text-red-600 mb-4">There was an error generating the PDF. Please try again.</p>
+                            <button id="closeMessageBox" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Close</button>
+                        </div>
+                    `;
+                    document.body.appendChild(messageBox);
+                    document.getElementById('closeMessageBox').onclick = () => document.body.removeChild(messageBox);
+                }
+            };
+            
+            const shareByEmail = () => {
+                const subject = encodeURIComponent('Lumbar Fusion ASD Risk Report');
+                const body = encodeURIComponent(`
+                Dear colleague,
+
+                Attached is the Adjacent Segment Disease (ASD) risk report for a patient, calculated using the specialized application.
+
+                Risk Score: ${riskScore} points
+                Risk Category: ${riskCategory}
+                Estimated 5-year Risk Percentage: ${estimatedPercentage}
+
+                Personalized Recommendations:
+                ${recommendations.length > 0 ? recommendations.map(rec => `- ${rec}`).join('\n') : 'No specific recommendations identified based on modifiable factors.'}
+
+                ${detailedRecommendations ? `\nDetailed Recommendations (AI Generated):\n${detailedRecommendations}` : ''}
+
+                Selected Variable Details:
+                ${Object.keys(variables).map(key => {
+                    const varDef = variableDefinitions.find(def => def.id === key);
+                    const selectedOption = varDef.options.find(opt => opt.value === variables[key]);
+                    return `${varDef.name}: ${selectedOption ? selectedOption.label : 'N/A'} (Points: ${selectedOption ? selectedOption.points : 0})`;
+                }).join('\n')}
+
+                Regards,
+                [Your Name]
+                `);
+                window.location.href = `mailto:?subject=${subject}&body=${body}`;
+            };
+
+
+            return (
+                <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 font-sans">
+                    <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
+                        {currentView === 'intro' && (
+                            <IntroScreen onStart={() => navigateTo('form')} />
+                        )}
+
+                        {currentView === 'form' && (
+                            <RiskForm
+                                variables={variables}
+                                variableDefinitions={variableDefinitions}
+                                onVariableChange={handleVariableChange}
+                                onCalculate={calculateRisk}
+                                onBack={() => navigateTo('intro')}
+                            />
+                        )}
+
+                        {currentView === 'results' && (
+                            <ResultScreen
+                                riskScore={riskScore}
+                                riskCategory={riskCategory}
+                                estimatedPercentage={estimatedPercentage}
+                                recommendations={recommendations}
+                                detailedRecommendations={detailedRecommendations}
+                                isGeneratingDetailedRecommendations={isGeneratingDetailedRecommendations}
+                                onGenerateDetailedRecommendations={generateDetailedRecommendations}
+                                onBack={() => navigateTo('form')}
+                                onExportPdf={exportPdf}
+                                onShareByEmail={shareByEmail}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // IntroScreen Component
+        const IntroScreen = ({ onStart }) => (
+            <div className="text-center">
+                <h1 className="text-3xl font-bold text-gray-800 mb-4 rounded-md">Lumbar Fusion ASD Risk Calculator</h1>
+                <p className="text-gray-600 mb-6">
+                    This application is designed for spine surgeons, allowing them to calculate and categorize the individual risk of Adjacent Segment Disease (ASD) after lumbar fusion, based on systematic evidence from 2010 to 2025.
+                </p>
+                <button
+                    onClick={onStart}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                >
+                    Calculate Risk
+                </button>
+            </div>
+        );
+
+        // RiskForm Component
+        const RiskForm = ({ variables, variableDefinitions, onVariableChange, onCalculate, onBack }) => (
+            <div>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-6 text-center rounded-md">ASD Risk Factors</h2>
+
+                <div className="mb-8">
+                    <h3 className="text-xl font-medium text-orange-600 mb-4">Non-Modifiable Factors</h3>
+                    {variableDefinitions.filter(v => v.type === 'non-modifiable').map(variable => (
+                        <VariableInput
+                            key={variable.id}
+                            variable={variable}
+                            selectedValue={variables[variable.id]}
+                            onChange={onVariableChange}
+                        />
+                    ))}
+                </div>
+
+                <div className="mb-8">
+                    <h3 className="text-xl font-medium text-green-600 mb-4">Modifiable Factors</h3>
+                    {variableDefinitions.filter(v => v.type === 'modifiable').map(variable => (
+                        <VariableInput
+                            key={variable.id}
+                            variable={variable}
+                            selectedValue={variables[variable.id]}
+                            onChange={onVariableChange}
+                        />
+                    ))}
+                </div>
+
+                <div className="flex justify-between mt-8">
+                    <button
+                        onClick={onBack}
+                        className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out"
+                    >
+                        Back
+                    </button>
+                    <button
+                        onClick={onCalculate}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                    >
+                        Calculate Score
+                    </button>
+                </div>
+            </div>
+        );
+
+        // VariableInput Component
+        const VariableInput = ({ variable, selectedValue, onChange }) => {
+            const [showDetails, setShowDetails] = React.useState(false);
+
+            return (
+                <div className="mb-6 p-4 border border-gray-200 rounded-lg shadow-sm bg-white">
+                    <div className="flex justify-between items-center mb-2">
+                        <label className="block text-gray-700 text-lg font-medium">
+                            {variable.name}
+                            <span className="text-sm text-gray-500 ml-2">({variable.evidence})</span>
+                        </label>
+                        {variable.description && (
+                            <button
+                                onClick={() => setShowDetails(!showDetails)}
+                                className="bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-semibold py-1 px-3 rounded-full transition duration-200 ease-in-out"
+                            >
+                                {showDetails ? 'Hide' : 'Details'}
+                            </button>
+                        )}
+                    </div>
+                    {showDetails && variable.description && (
+                        <div className="mt-2 p-3 bg-gray-50 border border-gray-100 rounded-md text-gray-600 text-sm">
+                            {variable.description}
+                        </div>
+                    )}
+                    <div className="flex flex-wrap gap-3 mt-3">
+                        {variable.options.map(option => (
+                            <button
+                                key={option.value}
+                                onClick={() => onChange(variable.id, option.value)}
+                                className={`
+                                    py-2 px-4 rounded-full border-2
+                                    ${selectedValue === option.value
+                                        ? 'bg-blue-500 text-white border-blue-600 shadow-md'
+                                        : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-blue-100 hover:border-blue-400'
+                                    }
+                                    transition duration-200 ease-in-out text-sm text-center whitespace-normal break-words flex-grow
+                                `}
+                            >
+                                {option.label} (+{option.points} pts)
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // ResultScreen Component
+        const ResultScreen = ({
+            riskScore,
+            riskCategory,
+            estimatedPercentage,
+            recommendations,
+            detailedRecommendations,
+            isGeneratingDetailedRecommendations,
+            onGenerateDetailedRecommendations,
+            onBack,
+            onExportPdf,
+            onShareByEmail
+        }) => {
+            let progressBarColor = 'bg-gray-400';
+            let textColor = 'text-gray-800';
+
+            if (riskCategory === 'Low') {
+                progressBarColor = 'bg-green-500';
+                textColor = 'text-green-700';
+            } else if (riskCategory === 'Moderate') {
+                progressBarColor = 'bg-yellow-500';
+                textColor = 'text-yellow-700';
+            } else if (riskCategory === 'High') {
+                progressBarColor = 'bg-red-500';
+                textColor = 'text-red-700';
+            }
+
+            const maxScore = 25;
+            const progressBarWidth = (riskScore / maxScore) * 100;
+
+            return (
+                <div id="result-content" className="p-4">
+                    <h2 className="text-2xl font-semibold text-gray-800 mb-6 text-center rounded-md">ASD Risk Calculation Result</h2>
+
+                    <div className="mb-6 p-4 border border-gray-200 rounded-lg shadow-sm bg-white text-center">
+                        <p className="text-xl font-bold text-gray-700 mb-2">Total Risk Score:</p>
+                        <p className={`text-5xl font-extrabold ${textColor}`}>{riskScore}</p>
+                        <p className="text-xl font-bold text-gray-700 mt-4 mb-2">Risk Category:</p>
+                        <p className={`text-3xl font-extrabold ${textColor}`}>{riskCategory}</p>
+                        <p className="text-lg text-gray-600 mt-2">Estimated 5-year Risk Percentage: <span className="font-semibold">{estimatedPercentage}</span></p>
+
+                        <div className="w-full bg-gray-200 rounded-full h-4 mt-6">
+                            <div
+                                className={`${progressBarColor} h-4 rounded-full transition-all duration-500 ease-in-out`}
+                                style={{ width: `${progressBarWidth}%` }}
+                            ></div>
+                        </div>
+                    </div>
+
+                    <div className="mb-6 p-4 border border-gray-200 rounded-lg shadow-sm bg-white">
+                        <div className="flex flex-col sm:flex-row justify-between items-center mb-3 gap-2">
+                            <h3 className="text-xl font-medium text-blue-600">Personalized Recommendations:</h3>
+                            <button
+                                onClick={onGenerateDetailedRecommendations}
+                                disabled={isGeneratingDetailedRecommendations}
+                                className={`
+                                    bg-purple-500 text-white font-bold py-2 px-4 rounded-lg shadow-md
+                                    transition duration-300 ease-in-out transform hover:scale-105
+                                    ${isGeneratingDetailedRecommendations ? 'opacity-50 cursor-not-allowed' : ''}
+                                `}
+                            >
+                                {isGeneratingDetailedRecommendations ? 'Generating...' : '✨ Generate Detailed Recommendations'}
+                            </button>
+                        </div>
+
+                        {recommendations.length > 0 ? (
+                            <ul className="list-disc list-inside text-gray-700 space-y-2">
+                                {recommendations.map((rec, index) => (
+                                    <li key={index} className="flex items-start">
+                                        <span className="text-green-500 mr-2">✅</span>
+                                        <span>{rec}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-gray-600">No specific recommendations identified based on selected modifiable factors.</p>
+                        )}
+
+                        {detailedRecommendations && (
+                            <div className="mt-6 pt-4 border-t border-gray-200">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-2">Detailed Recommendations (AI Generated):</h4>
+                                <p className="text-gray-700 whitespace-pre-wrap">{detailedRecommendations}</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row justify-between gap-4 mt-8">
+                        <button
+                            onClick={onBack}
+                            className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out w-full sm:w-auto"
+                        >
+                            Recalculate
+                        </button>
+                        <button
+                            onClick={onExportPdf}
+                            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 w-full sm:w-auto"
+                        >
+                            Export to PDF
+                        </button>
+                        <button
+                            onClick={onShareByEmail}
+                            className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 w-full sm:w-auto"
+                        >
+                            Share by Email
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the App component into the 'root' div
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
